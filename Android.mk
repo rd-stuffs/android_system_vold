@@ -57,7 +57,11 @@ common_static_libraries := \
 	libfs_mgr \
 	libscrypt_static \
 	libmincrypt \
-	libbatteryservice
+	libbatteryservice \
+	libext2_blkid \
+	libext2_uuid_static \
+	libsparse_static \
+	libz
 
 include $(CLEAR_VARS)
 
