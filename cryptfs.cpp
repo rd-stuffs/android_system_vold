@@ -61,6 +61,7 @@
 #include "EncryptInplace.h"
 #include "Process.h"
 #include "Keymaster.h"
+#include "Utils.h"
 #include "android-base/properties.h"
 #include "android-base/stringprintf.h"
 #include <bootloader_message/bootloader_message.h>
@@ -71,6 +72,7 @@ extern "C" {
 #include <crypto_scrypt.h>
 }
 
+using namespace std::chrono_literals;
 using android::base::StringPrintf;
 
 #define UNUSED __attribute__((unused))
@@ -1374,6 +1376,12 @@ static int create_crypto_blk_dev(struct crypt_mnt_ftr* crypt_ftr, const unsigned
 
     if (ioctl(fd, DM_DEV_SUSPEND, io)) {
         SLOGE("Cannot resume the dm-crypt device\n");
+        goto errout;
+    }
+
+    /* Ensure the dm device has been created before returning. */
+    if (android::vold::WaitForFile(crypto_blk_name, 1s) < 0) {
+        // WaitForFile generates a suitable log message
         goto errout;
     }
 

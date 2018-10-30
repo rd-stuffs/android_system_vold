@@ -24,6 +24,7 @@
 #include <cutils/multiuser.h>
 #include <selinux/selinux.h>
 
+#include <chrono>
 #include <vector>
 #include <string>
 
@@ -126,6 +127,8 @@ bool Readlinkat(int dirfd, const std::string& path, std::string* result);
 bool IsRunningInEmulator();
 
 bool FsyncDirectory(const std::string& dirname);
+
+status_t WaitForFile(const char* filename, std::chrono::nanoseconds timeout);
 
 }  // namespace vold
 }  // namespace android
