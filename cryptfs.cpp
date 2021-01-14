@@ -1345,7 +1345,7 @@ static int create_crypto_blk_dev_hw(struct crypt_mnt_ftr* crypt_ftr, const unsig
         goto errout;
     }
     minor = (io->dev & 0xff) | ((io->dev >> 12) & 0xfff00);
-    *crypto_blk_name = android::base::StringPrintf("/dev/block/dm-%u", minor);
+    snprintf(crypto_blk_name->data(), MAXPATHLEN, "/dev/block/dm-%u", minor);
 
     if(is_hw_disk_encryption((char*)crypt_ftr->crypto_type_name)) {
       /* Set fde_enabled if either FDE completed or in-progress */
@@ -2108,6 +2108,7 @@ static int test_mount_hw_encrypted_fs(struct crypt_mnt_ftr* crypt_ftr,
 {
     /* Allocate enough space for a 256 bit key, but we may use less */
     unsigned char decrypted_master_key[32];
+    std::string crypto_blkdev_hw;
     std::string crypto_blkdev;
     std::string real_blkdev;
     unsigned int orig_failed_decrypt_count;
@@ -2129,7 +2130,7 @@ static int test_mount_hw_encrypted_fs(struct crypt_mnt_ftr* crypt_ftr,
             if (is_ice_enabled()) {
 #ifndef CONFIG_HW_DISK_ENCRYPT_PERF
                 if (create_crypto_blk_dev_hw(crypt_ftr, (unsigned char*)&key_index,
-                                          real_blkdev.c_str(), &crypto_blkdev, label, 0)) {
+                                          real_blkdev.c_str(), &crypto_blkdev_hw, label, 0)) {
                     SLOGE("Error creating decrypted block device");
                     rc = -1;
                     goto errout;
@@ -2154,10 +2155,13 @@ static int test_mount_hw_encrypted_fs(struct crypt_mnt_ftr* crypt_ftr,
 
         /* Save the name of the crypto block device
          * so we can mount it when restarting the framework. */
-#ifdef CONFIG_HW_DISK_ENCRYPT_PERF
-        if (!is_ice_enabled())
+        if (is_ice_enabled()) {
+#ifndef CONFIG_HW_DISK_ENCRYPT_PERF
+            property_set("ro.crypto.fs_crypto_blkdev", crypto_blkdev_hw.c_str());
 #endif
-        property_set("ro.crypto.fs_crypto_blkdev", crypto_blkdev.c_str());
+        } else {
+            property_set("ro.crypto.fs_crypto_blkdev", crypto_blkdev.c_str());
+        }
         master_key_saved = 1;
     }
 
