@@ -53,6 +53,7 @@ using android::fs_mgr::GetEntryForMountPoint;
 using android::fscrypt::GetFirstApiLevel;
 using android::vold::KeyBuffer;
 using namespace android::dm;
+using namespace std::chrono_literals;
 
 // Parsed from metadata options
 struct CryptoOptions {
@@ -80,6 +81,17 @@ static_assert(isValidCryptoType(64, legacy_aes_256_xts),
 // Returns KeyGeneration suitable for key as described in CryptoOptions
 const KeyGeneration makeGen(const CryptoOptions& options) {
     return KeyGeneration{options.cipher.get_keysize(), true, options.use_hw_wrapped_key};
+}
+
+void defaultkey_precreate_dm_device() {
+    auto& dm = DeviceMapper::Instance();
+    if (dm.GetState(kDmNameUserdata) != DmDeviceState::INVALID) {
+        LOG(INFO) << "Not pre-creating userdata encryption device; device already exists";
+        return;
+    }
+    if (!dm.CreateEmptyDevice(kDmNameUserdata)) {
+        LOG(ERROR) << "Failed to pre-create userdata metadata encryption device";
+    }
 }
 
 static bool mount_via_fs_mgr(const char* mount_point, const char* blk_device) {
@@ -114,7 +126,9 @@ static bool read_key(const std::string& metadata_key_dir, const KeyGeneration& g
     auto dir = metadata_key_dir + "/key";
     LOG(DEBUG) << "metadata_key_dir/key: " << dir;
     if (!MkdirsSync(dir, 0700)) return false;
-    if (!pathExists(dir)) {
+    auto in_dsu = android::base::GetBoolProperty("ro.gsid.image_running", false);
+    // !pathExists(dir) does not imply there's a factory reset when in DSU mode.
+    if (!pathExists(dir) && !in_dsu) {
         auto delete_all = android::base::GetBoolProperty(
                 "ro.crypto.metadata_init_delete_all_keys.enabled", false);
         if (delete_all) {
@@ -172,8 +186,19 @@ static bool create_crypto_blk_dev(const std::string& dm_name, const std::string&
     table.AddTarget(std::move(target));
 
     auto& dm = DeviceMapper::Instance();
-    if (!dm.CreateDevice(dm_name, table, crypto_blkdev, std::chrono::seconds(5))) {
-        PLOG(ERROR) << "Could not create default-key device " << dm_name;
+    if (dm_name == kDmNameUserdata && dm.GetState(dm_name) == DmDeviceState::SUSPENDED) {
+        // The device was created in advance, populate it now.
+        std::string path;
+        if (!dm.WaitForDevice(dm_name, 5s, crypto_blkdev)) {
+            LOG(ERROR) << "Failed to wait for default-key device " << dm_name;
+            return false;
+        }
+        if (!dm.LoadTableAndActivate(dm_name, table)) {
+            LOG(ERROR) << "Failed to populate default-key device " << dm_name;
+            return false;
+        }
+    } else if (!dm.CreateDevice(dm_name, table, crypto_blkdev, 5s)) {
+        LOG(ERROR) << "Could not create default-key device " << dm_name;
         return false;
     }
     return true;
