@@ -1999,7 +1999,7 @@ static int cryptfs_restart_internal(int restart_main) {
 #if defined(CONFIG_HW_DISK_ENCRYPTION)
 #if defined(CONFIG_HW_DISK_ENCRYPT_PERF)
     if (is_ice_enabled()) {
-        get_crypt_info(nullptr, &blkdev);
+        blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "");
         if (set_ice_param(START_ENCDEC)) {
              SLOGE("Failed to set ICE data");
              return -1;
@@ -2011,7 +2011,6 @@ static int cryptfs_restart_internal(int restart_main) {
          SLOGE("fs_crypto_blkdev not set\n");
          return -1;
     }
-    if (!(rc = wait_and_unmount(DATA_MNT_POINT))) {
 #endif
 #else
     crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "");
@@ -2019,8 +2018,8 @@ static int cryptfs_restart_internal(int restart_main) {
         SLOGE("fs_crypto_blkdev not set\n");
         return -1;
     }
-    if (!(rc = wait_and_unmount(DATA_MNT_POINT))) {
 #endif
+   if (!(rc = wait_and_unmount(DATA_MNT_POINT))) {
         /* If ro.crypto.readonly is set to 1, mount the decrypted
          * filesystem readonly.  This is used when /data is mounted by
          * recovery mode.
@@ -2108,9 +2107,7 @@ static int cryptfs_restart_internal(int restart_main) {
 
         /* Give it a few moments to get started */
         sleep(1);
-#ifndef CONFIG_HW_DISK_ENCRYPT_PERF
     }
-#endif
     if (rc == 0) {
         restart_successful = 1;
     }
@@ -2240,6 +2237,8 @@ static int test_mount_hw_encrypted_fs(struct crypt_mnt_ftr* crypt_ftr,
         if (is_ice_enabled()) {
 #ifndef CONFIG_HW_DISK_ENCRYPT_PERF
             property_set("ro.crypto.fs_crypto_blkdev", crypto_blkdev_hw.c_str());
+#else
+            property_set("ro.crypto.fs_crypto_blkdev", real_blkdev.c_str());
 #endif
         } else {
             property_set("ro.crypto.fs_crypto_blkdev", crypto_blkdev.c_str());
