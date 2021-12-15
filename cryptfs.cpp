@@ -2011,6 +2011,7 @@ static int cryptfs_restart_internal(int restart_main) {
          SLOGE("fs_crypto_blkdev not set\n");
          return -1;
     }
+    if (!(rc = wait_and_unmount(DATA_MNT_POINT))) {
 #endif
 #else
     crypto_blkdev = android::base::GetProperty("ro.crypto.fs_crypto_blkdev", "");
@@ -2018,8 +2019,8 @@ static int cryptfs_restart_internal(int restart_main) {
         SLOGE("fs_crypto_blkdev not set\n");
         return -1;
     }
-#endif
     if (!(rc = wait_and_unmount(DATA_MNT_POINT))) {
+#endif
         /* If ro.crypto.readonly is set to 1, mount the decrypted
          * filesystem readonly.  This is used when /data is mounted by
          * recovery mode.
@@ -2107,8 +2108,9 @@ static int cryptfs_restart_internal(int restart_main) {
 
         /* Give it a few moments to get started */
         sleep(1);
+#ifndef CONFIG_HW_DISK_ENCRYPT_PERF
     }
-
+#endif
     if (rc == 0) {
         restart_successful = 1;
     }
@@ -2846,6 +2848,7 @@ int cryptfs_enable_internal(int crypt_type, const char* passwd, int no_ui) {
          * /data, set a property saying we're doing inplace encryption,
          * and restart the framework.
          */
+        wait_and_unmount(DATA_MNT_POINT);
         if (fs_mgr_do_tmpfs_mount(DATA_MNT_POINT)) {
             goto error_shutting_down;
         }
@@ -2876,19 +2879,21 @@ int cryptfs_enable_internal(int crypt_type, const char* passwd, int no_ui) {
 
     decrypt_master_key(passwd, decrypted_master_key, &crypt_ftr, 0, 0);
 #ifdef CONFIG_HW_DISK_ENCRYPTION
-    if (is_hw_disk_encryption((char*)crypt_ftr.crypto_type_name) && is_ice_enabled())
+    if (is_hw_disk_encryption((char*)crypt_ftr.crypto_type_name) && is_ice_enabled()) {
 #ifdef CONFIG_HW_DISK_ENCRYPT_PERF
       crypto_blkdev = real_blkdev;
+      rc = 0;
 #else
-      create_crypto_blk_dev_hw(&crypt_ftr, (unsigned char*)&key_index, real_blkdev.c_str(), &crypto_blkdev,
-                          CRYPTO_BLOCK_DEVICE, 0);
+      rc = create_crypto_blk_dev_hw(&crypt_ftr, (unsigned char*)&key_index, real_blkdev.c_str(),
+                          &crypto_blkdev, CRYPTO_BLOCK_DEVICE, 0);
 #endif
+    }
     else
-      create_crypto_blk_dev(&crypt_ftr, decrypted_master_key, real_blkdev.c_str(), &crypto_blkdev,
-                          CRYPTO_BLOCK_DEVICE, 0);
+      rc = create_crypto_blk_dev(&crypt_ftr, decrypted_master_key, real_blkdev.c_str(),
+                          &crypto_blkdev, CRYPTO_BLOCK_DEVICE, 0);
 #else
-    create_crypto_blk_dev(&crypt_ftr, decrypted_master_key, real_blkdev.c_str(), &crypto_blkdev,
-                          CRYPTO_BLOCK_DEVICE, 0);
+      rc = create_crypto_blk_dev(&crypt_ftr, decrypted_master_key, real_blkdev.c_str(),
+                          &crypto_blkdev, CRYPTO_BLOCK_DEVICE, 0);
 #endif
 
 #if defined(CONFIG_HW_DISK_ENCRYPTION) && defined(CONFIG_HW_DISK_ENCRYPT_PERF)
