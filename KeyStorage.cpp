@@ -18,7 +18,6 @@
 
 #include "Checkpoint.h"
 #include "Keystore.h"
-#include "ScryptParameters.h"
 #include "Utils.h"
 
 #include <algorithm>
@@ -44,11 +43,6 @@
 #include <android-base/unique_fd.h>
 
 #include <cutils/properties.h>
-
-extern "C" {
-
-#include "crypto_scrypt.h"
-}
 
 namespace android {
 namespace vold {
@@ -624,9 +618,15 @@ static bool storeKey(const std::string& dir, const KeyAuthentication& auth, cons
         if (!generateKeyStorageKey(keystore, appId, &ksKey)) return false;
         if (!writeStringToFile(ksKey, dir + "/" + kFn_keymaster_key_blob)) return false;
         km::AuthorizationSet keyParams = beginParams(appId);
-        if (!encryptWithKeystoreKey(keystore, dir, keyParams, key, &encryptedKey)) return false;
+        if (!encryptWithKeystoreKey(keystore, dir, keyParams, key, &encryptedKey)) {
+            LOG(ERROR) << "encryptWithKeystoreKey failed";
+            return false;
+        }
     } else {
-        if (!encryptWithoutKeystore(appId, key, &encryptedKey)) return false;
+        if (!encryptWithoutKeystore(appId, key, &encryptedKey)) {
+            LOG(ERROR) << "encryptWithoutKeystore failed";
+            return false;
+        }
     }
     if (!writeStringToFile(encryptedKey, dir + "/" + kFn_encrypted_key)) return false;
     if (!FsyncDirectory(dir)) return false;
@@ -671,9 +671,15 @@ bool retrieveKey(const std::string& dir, const KeyAuthentication& auth, KeyBuffe
         Keystore keystore;
         if (!keystore) return false;
         km::AuthorizationSet keyParams = beginParams(appId);
-        if (!decryptWithKeystoreKey(keystore, dir, keyParams, encryptedMessage, key)) return false;
+        if (!decryptWithKeystoreKey(keystore, dir, keyParams, encryptedMessage, key)) {
+            LOG(ERROR) << "decryptWithKeystoreKey failed";
+            return false;
+        }
     } else {
-        if (!decryptWithoutKeystore(appId, encryptedMessage, key)) return false;
+        if (!decryptWithoutKeystore(appId, encryptedMessage, key)) {
+            LOG(ERROR) << "decryptWithoutKeystore failed";
+            return false;
+        }
     }
     return true;
 }

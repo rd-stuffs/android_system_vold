@@ -19,7 +19,6 @@
 #include "VoldNativeService.h"
 
 #include <android-base/logging.h>
-#include <android-base/stringprintf.h>
 #include <android-base/strings.h>
 #include <fs_mgr.h>
 #include <fscrypt/fscrypt.h>
@@ -27,7 +26,6 @@
 #include <utils/Trace.h>
 
 #include <stdio.h>
-#include <sys/vfs.h>
 #include <fstream>
 #include <thread>
 
@@ -39,15 +37,12 @@
 #include "Keystore.h"
 #include "MetadataCrypt.h"
 #include "MoveStorage.h"
-#include "Process.h"
 #include "VoldNativeServiceValidation.h"
 #include "VoldUtil.h"
 #include "VolumeManager.h"
 #include "cryptfs.h"
 #include "incfs.h"
 
-using android::base::StringPrintf;
-using std::endl;
 using namespace std::literals;
 
 namespace android {
@@ -524,131 +519,108 @@ binder::Status VoldNativeService::openAppFuseFile(int32_t uid, int32_t mountId, 
     return Ok();
 }
 
+// TODO(b/191796797) remove this once caller is removed
 binder::Status VoldNativeService::fdeCheckPassword(const std::string& password) {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    return translate(cryptfs_check_passwd(password.c_str()));
+    SLOGE("fdeCheckPassword is no longer supported");
+    return translate(-1);
 }
 
+// TODO(b/191796797) remove this once caller is removed
 binder::Status VoldNativeService::fdeRestart() {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    // Spawn as thread so init can issue commands back to vold without
-    // causing deadlock, usually as a result of prep_data_fs.
-    std::thread(&cryptfs_restart).detach();
+    SLOGE("fdeRestart is no longer supported");
     return Ok();
 }
 
+// TODO(b/191796797) remove this once caller is removed
+#define CRYPTO_COMPLETE_NOT_ENCRYPTED 1
 binder::Status VoldNativeService::fdeComplete(int32_t* _aidl_return) {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    *_aidl_return = cryptfs_crypto_complete();
+    SLOGE("fdeComplete is no longer supported");
+    *_aidl_return = CRYPTO_COMPLETE_NOT_ENCRYPTED;
     return Ok();
 }
 
-static int fdeEnableInternal(int32_t passwordType, const std::string& password,
-                             int32_t encryptionFlags) {
-    bool noUi = (encryptionFlags & VoldNativeService::ENCRYPTION_FLAG_NO_UI) != 0;
-
-    for (int tries = 0; tries < 2; ++tries) {
-        int rc;
-        if (passwordType == VoldNativeService::PASSWORD_TYPE_DEFAULT) {
-            rc = cryptfs_enable_default(noUi);
-        } else {
-            rc = cryptfs_enable(passwordType, password.c_str(), noUi);
-        }
-
-        if (rc == 0) {
-            return 0;
-        } else if (tries == 0) {
-            KillProcessesWithOpenFiles(DATA_MNT_POINT, SIGKILL);
-        }
-    }
-
-    return -1;
-}
-
+// TODO(b/191796797) remove this once caller is removed
 binder::Status VoldNativeService::fdeEnable(int32_t passwordType, const std::string& password,
                                             int32_t encryptionFlags) {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    LOG(DEBUG) << "fdeEnable(" << passwordType << ", *, " << encryptionFlags << ")";
-    if (fscrypt_is_native()) {
-        LOG(ERROR) << "fscrypt_is_native, fdeEnable invalid";
-        return error("fscrypt_is_native, fdeEnable invalid");
-    }
-    LOG(DEBUG) << "!fscrypt_is_native, spawning fdeEnableInternal";
-
-    // Spawn as thread so init can issue commands back to vold without
-    // causing deadlock, usually as a result of prep_data_fs.
-    std::thread(&fdeEnableInternal, passwordType, password, encryptionFlags).detach();
-    return Ok();
+    SLOGE("fdeEnable is no longer supported");
+    return translate(-1);
 }
 
+// TODO(b/191796797) remove this once caller is removed
 binder::Status VoldNativeService::fdeChangePassword(int32_t passwordType,
                                                     const std::string& currentPassword,
                                                     const std::string& password) {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    return translate(cryptfs_changepw(passwordType, currentPassword.c_str(), password.c_str()));
+    SLOGE("fdeChangePassword is no longer supported");
+    return translate(-1);
 }
 
+// TODO(b/191796797) remove this once caller is removed
 binder::Status VoldNativeService::fdeVerifyPassword(const std::string& password) {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    return translate(cryptfs_verify_passwd(password.c_str()));
+    SLOGE("fdeVerifyPassword is no longer supported");
+    return translate(-1);
 }
 
+// TODO(b/191796797) remove this once caller is removed
 binder::Status VoldNativeService::fdeGetField(const std::string& key, std::string* _aidl_return) {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    char buf[PROPERTY_VALUE_MAX];
-    if (cryptfs_getfield(key.c_str(), buf, sizeof(buf)) != CRYPTO_GETFIELD_OK) {
-        return error(StringPrintf("Failed to read field %s", key.c_str()));
-    } else {
-        *_aidl_return = buf;
-        return Ok();
-    }
+    SLOGE("fdeGetField is no longer supported");
+    return translate(-1);
 }
 
+// TODO(b/191796797) remove this once caller is removed
 binder::Status VoldNativeService::fdeSetField(const std::string& key, const std::string& value) {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    return translate(cryptfs_setfield(key.c_str(), value.c_str()));
+    SLOGE("fdeSetField is no longer supported");
+    return translate(-1);
 }
 
+// TODO(b/191796797) remove this once caller is removed
 binder::Status VoldNativeService::fdeGetPasswordType(int32_t* _aidl_return) {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    *_aidl_return = cryptfs_get_password_type();
+    SLOGE("fdeGetPasswordType is no longer supported");
+    *_aidl_return = -1;
     return Ok();
 }
 
+// TODO(b/191796797) remove this once caller is removed
 binder::Status VoldNativeService::fdeGetPassword(std::string* _aidl_return) {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    const char* res = cryptfs_get_password();
-    if (res != nullptr) {
-        *_aidl_return = res;
-    }
+    SLOGE("fdeGetPassword is no longer supported");
     return Ok();
 }
 
+// TODO(b/191796797) remove this once caller is removed
 binder::Status VoldNativeService::fdeClearPassword() {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    cryptfs_clear_password();
+    SLOGE("fdeClearPassword is no longer supported");
     return Ok();
 }
 
@@ -659,15 +631,12 @@ binder::Status VoldNativeService::fbeEnable() {
     return translateBool(fscrypt_initialize_systemwide_keys());
 }
 
+// TODO(b/191796797) remove this once caller is removed
 binder::Status VoldNativeService::mountDefaultEncrypted() {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    if (!fscrypt_is_native()) {
-        // Spawn as thread so init can issue commands back to vold without
-        // causing deadlock, usually as a result of prep_data_fs.
-        std::thread(&cryptfs_mount_default_encrypted).detach();
-    }
+    SLOGE("mountDefaultEncrypted is no longer supported");
     return Ok();
 }
 
@@ -678,11 +647,13 @@ binder::Status VoldNativeService::initUser0() {
     return translateBool(fscrypt_init_user0());
 }
 
+// TODO(b/191796797) remove this once caller is removed
 binder::Status VoldNativeService::isConvertibleToFbe(bool* _aidl_return) {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_CRYPT_LOCK;
 
-    *_aidl_return = cryptfs_isConvertibleToFBE() != 0;
+    SLOGE("isConvertibleToFbe is no longer supported");
+    *_aidl_return = false;
     return Ok();
 }
 
@@ -941,41 +912,9 @@ static void initializeIncFs() {
     incfs::features();
 }
 
-// This is missing from the kernel UAPI headers.
-#define ST_RDONLY 0x0001
-
-// FDE devices run the post-fs-data trigger (and hence also earlyBootEnded)
-// multiple times, sometimes prior to the real /data being mounted.  That causes
-// keystore2 to try to open a file in /data, causing it to panic or have to be
-// killed by vold later, causing problems (vold failing to connect to keystore2,
-// or keystore2 operations erroring out later).  As a workaround to keep FDE
-// working, ignore these too-early calls to earlyBootEnded.
-//
-// This can be removed when support for FDE is removed.
-static bool IgnoreEarlyBootEnded() {
-    // The statfs("/data") below should be sufficient by itself, but to be safe
-    // we also explicitly return false on FBE devices.  (This really should be
-    // ro.crypto.type != "block" for "non-FDE devices", but on FDE devices this
-    // is sometimes called before ro.crypto.type gets set.)
-    if (fscrypt_is_native()) return false;
-
-    struct statfs buf;
-    if (statfs(DATA_MNT_POINT, &buf) != 0) {
-        PLOG(ERROR) << "statfs(\"/data\") failed";
-        return false;
-    }
-    if (buf.f_type == TMPFS_MAGIC || (buf.f_flags & ST_RDONLY)) {
-        LOG(INFO) << "Ignoring earlyBootEnded since real /data isn't mounted yet";
-        return true;
-    }
-    return false;
-}
-
 binder::Status VoldNativeService::earlyBootEnded() {
     ENFORCE_SYSTEM_OR_ROOT;
     ACQUIRE_LOCK;
-
-    if (IgnoreEarlyBootEnded()) return Ok();
 
     initializeIncFs();
     Keystore::earlyBootEnded();
@@ -994,10 +933,25 @@ binder::Status VoldNativeService::mountIncFs(
         const std::string& sysfsName,
         ::android::os::incremental::IncrementalFileSystemControlParcel* _aidl_return) {
     ENFORCE_SYSTEM_OR_ROOT;
-    CHECK_ARGUMENT_PATH(backingPath);
-    CHECK_ARGUMENT_PATH(targetDir);
+    if (auto status = CheckIncrementalPath(IncrementalPathKind::MountTarget, targetDir);
+        !status.isOk()) {
+        return status;
+    }
+    if (auto status = CheckIncrementalPath(IncrementalPathKind::MountSource, backingPath);
+        !status.isOk()) {
+        return status;
+    }
 
-    auto control = incfs::mount(backingPath, targetDir,
+    auto [backingFd, backingSymlink] = OpenDirInProcfs(backingPath);
+    if (!backingFd.ok()) {
+        return translate(-errno);
+    }
+    auto [targetFd, targetSymlink] = OpenDirInProcfs(targetDir);
+    if (!targetFd.ok()) {
+        return translate(-errno);
+    }
+
+    auto control = incfs::mount(backingSymlink, targetSymlink,
                                 {.flags = IncFsMountFlags(flags),
                                  // Mount with read timeouts.
                                  .defaultReadTimeoutMs = INCFS_DEFAULT_READ_TIMEOUT_MS,
@@ -1020,9 +974,15 @@ binder::Status VoldNativeService::mountIncFs(
 
 binder::Status VoldNativeService::unmountIncFs(const std::string& dir) {
     ENFORCE_SYSTEM_OR_ROOT;
-    CHECK_ARGUMENT_PATH(dir);
+    if (auto status = CheckIncrementalPath(IncrementalPathKind::Any, dir); !status.isOk()) {
+        return status;
+    }
 
-    return translate(incfs::unmount(dir));
+    auto [fd, symLink] = OpenDirInProcfs(dir);
+    if (!fd.ok()) {
+        return translate(-errno);
+    }
+    return translate(incfs::unmount(symLink));
 }
 
 binder::Status VoldNativeService::setIncFsMountOptions(
@@ -1040,26 +1000,52 @@ binder::Status VoldNativeService::setIncFsMountOptions(
     };
     auto cleanup =
             std::unique_ptr<incfs::Control, decltype(cleanupFunc)>(&incfsControl, cleanupFunc);
-    if (auto error = incfs::setOptions(
-                incfsControl,
-                {.defaultReadTimeoutMs =
-                         enableReadTimeouts ? INCFS_DEFAULT_READ_TIMEOUT_MS : kIncFsReadNoTimeoutMs,
-                 .readLogBufferPages = enableReadLogs ? INCFS_DEFAULT_PAGE_READ_BUFFER_PAGES : 0,
-                 .sysfsName = sysfsName.c_str()});
-        error < 0) {
-        return binder::Status::fromServiceSpecificError(error);
-    }
 
+    constexpr auto minReadLogBufferPages = INCFS_DEFAULT_PAGE_READ_BUFFER_PAGES;
+    constexpr auto maxReadLogBufferPages = 8 * INCFS_DEFAULT_PAGE_READ_BUFFER_PAGES;
+    auto options = incfs::MountOptions{
+            .defaultReadTimeoutMs =
+                    enableReadTimeouts ? INCFS_DEFAULT_READ_TIMEOUT_MS : kIncFsReadNoTimeoutMs,
+            .readLogBufferPages = enableReadLogs ? maxReadLogBufferPages : 0,
+            .sysfsName = sysfsName.c_str()};
+
+    for (;;) {
+        const auto error = incfs::setOptions(incfsControl, options);
+        if (!error) {
+            return Ok();
+        }
+        if (!enableReadLogs || error != -ENOMEM) {
+            return binder::Status::fromServiceSpecificError(error);
+        }
+        // In case of memory allocation error retry with a smaller buffer.
+        options.readLogBufferPages /= 2;
+        if (options.readLogBufferPages < minReadLogBufferPages) {
+            return binder::Status::fromServiceSpecificError(error);
+        }
+    }
+    // unreachable, but makes the compiler happy
     return Ok();
 }
 
 binder::Status VoldNativeService::bindMount(const std::string& sourceDir,
                                             const std::string& targetDir) {
     ENFORCE_SYSTEM_OR_ROOT;
-    CHECK_ARGUMENT_PATH(sourceDir);
-    CHECK_ARGUMENT_PATH(targetDir);
+    if (auto status = CheckIncrementalPath(IncrementalPathKind::Any, sourceDir); !status.isOk()) {
+        return status;
+    }
+    if (auto status = CheckIncrementalPath(IncrementalPathKind::Bind, targetDir); !status.isOk()) {
+        return status;
+    }
 
-    return translate(incfs::bindMount(sourceDir, targetDir));
+    auto [sourceFd, sourceSymlink] = OpenDirInProcfs(sourceDir);
+    if (!sourceFd.ok()) {
+        return translate(-errno);
+    }
+    auto [targetFd, targetSymlink] = OpenDirInProcfs(targetDir);
+    if (!targetFd.ok()) {
+        return translate(-errno);
+    }
+    return translate(incfs::bindMount(sourceSymlink, targetSymlink));
 }
 
 binder::Status VoldNativeService::destroyDsuMetadataKey(const std::string& dsuSlot) {
