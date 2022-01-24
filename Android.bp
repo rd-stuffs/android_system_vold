@@ -107,6 +107,7 @@ cc_library_static {
     defaults: [
         "vold_default_flags",
         "vold_default_libs",
+        "keystore2_use_latest_aidl_ndk_shared",
     ],
 
     srcs: [
@@ -172,7 +173,6 @@ cc_library_static {
     shared_libs: [
         "android.hardware.health.storage@1.0",
         "android.hardware.health.storage-V1-ndk",
-        "android.system.keystore2-V1-ndk",
         "android.security.maintenance-ndk",
         "libbinder_ndk",
         "libkeymint_support",
@@ -188,6 +188,7 @@ cc_binary {
     defaults: [
         "vold_default_flags",
         "vold_default_libs",
+        "keystore2_use_latest_aidl_ndk_shared",
     ],
 
     srcs: ["main.cpp"],
@@ -205,7 +206,6 @@ cc_binary {
     shared_libs: [
         "android.hardware.health.storage@1.0",
         "android.hardware.health.storage-V1-ndk",
-        "android.system.keystore2-V1-ndk",
         "android.security.maintenance-ndk",
         "libbinder_ndk",
         "libkeymint_support",
