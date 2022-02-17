@@ -65,8 +65,13 @@ interface IVold {
     void destroyObb(@utf8InCpp String volId);
 
     void fstrim(int fstrimFlags, IVoldTaskListener listener);
-    void runIdleMaint(IVoldTaskListener listener);
+    void runIdleMaint(boolean needGC, IVoldTaskListener listener);
     void abortIdleMaint(IVoldTaskListener listener);
+    int getStorageLifeTime();
+    void setGCUrgentPace(int neededSegments, int minSegmentThreshold,
+                         float dirtyReclaimRate, float reclaimWeight);
+    void refreshLatestWrite();
+    int getWriteAmount();
 
     FileDescriptor mountAppFuse(int uid, int mountId);
     void unmountAppFuse(int uid, int mountId);
@@ -159,7 +164,8 @@ interface IVold {
     const int FSTRIM_FLAG_DEEP_TRIM = 1;
 
     const int MOUNT_FLAG_PRIMARY = 1;
-    const int MOUNT_FLAG_VISIBLE = 2;
+    const int MOUNT_FLAG_VISIBLE_FOR_READ = 2;
+    const int MOUNT_FLAG_VISIBLE_FOR_WRITE = 4;
 
     const int PARTITION_TYPE_PUBLIC = 0;
     const int PARTITION_TYPE_PRIVATE = 1;
