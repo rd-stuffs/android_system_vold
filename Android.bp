@@ -176,7 +176,7 @@ cc_library_static {
         "libkeymint_support",
     ],
     whole_static_libs: [
-        "com.android.sysprop.apex",
+        "libcom.android.sysprop.apex",
         "libc++fs",
     ],
 }
@@ -198,7 +198,7 @@ cc_binary {
     required: [
         "mke2fs",
         "vold_prepare_subdirs",
-        "fuse_media.o",
+        "fuseMedia.o",
     ],
 
     shared_libs: [
