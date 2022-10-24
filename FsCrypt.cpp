@@ -100,6 +100,9 @@ const std::string media_obb_dir = std::string() + DATA_MNT_POINT + "/media/obb";
 // Some users are ephemeral, don't try to wipe their keys from disk
 std::set<userid_t> s_ephemeral_users;
 
+// New CE keys that haven't been committed to disk yet
+std::map<userid_t, KeyBuffer> s_new_ce_keys;
+
 // The system DE encryption policy
 EncryptionPolicy s_device_policy;
 
@@ -177,8 +180,7 @@ static bool get_ce_key_new_path(const std::string& directory_path,
 }
 
 // Discard all keys but the named one; rename it to canonical name.
-// No point in acting on errors in this; ignore them.
-static void fixate_user_ce_key(const std::string& directory_path, const std::string& to_fix,
+static bool fixate_user_ce_key(const std::string& directory_path, const std::string& to_fix,
                                const std::vector<std::string>& paths) {
     for (auto const other_path : paths) {
         if (other_path != to_fix) {
@@ -188,9 +190,10 @@ static void fixate_user_ce_key(const std::string& directory_path, const std::str
     auto const current_path = get_ce_key_current_path(directory_path);
     if (to_fix != current_path) {
         LOG(DEBUG) << "Renaming " << to_fix << " to " << current_path;
-        if (!android::vold::RenameKeyDir(to_fix, current_path)) return;
+        if (!android::vold::RenameKeyDir(to_fix, current_path)) return false;
     }
-    android::vold::FsyncDirectory(directory_path);
+    if (!android::vold::FsyncDirectory(directory_path)) return false;
+    return true;
 }
 
 static bool read_and_fixate_user_ce_key(userid_t user_id,
@@ -346,39 +349,74 @@ static bool destroy_dir(const std::string& dir) {
     return true;
 }
 
-// NB this assumes that there is only one thread listening for crypt commands, because
-// it creates keys in a fixed location.
+// Checks whether at least one CE key subdirectory exists.
+static bool ce_key_exists(const std::string& directory_path) {
+    // The common case is that "$dir/current" exists, so check for that first.
+    if (android::vold::pathExists(get_ce_key_current_path(directory_path))) return true;
+
+    // Else, there could still be another subdirectory of $dir (if a crash
+    // occurred during fixate_user_ce_key()), so check for one.
+    return android::vold::pathExists(directory_path) && !get_ce_key_paths(directory_path).empty();
+}
+
+// Creates and installs the CE and DE keys for the given user, as needed.
+//
+// We store the DE key right away.  We don't store the CE key yet, because the
+// secret needed to do so securely isn't available yet.  Instead, we cache the
+// CE key in memory and store it later in fscrypt_set_user_key_protection().
+//
+// For user 0, this function is called on every boot, so we need to create the
+// keys only if they weren't already stored.  In doing so, we must consider the
+// DE and CE keys independently, since the first boot might have been
+// interrupted between the DE key being stored and the CE key being stored.
+//
+// For other users, this is only called at user creation time, and neither key
+// directory should exist already.   |create_ephemeral| means that the user is
+// ephemeral; in that case the keys are generated and installed, but not stored.
 static bool create_and_install_user_keys(userid_t user_id, bool create_ephemeral) {
     EncryptionOptions options;
     if (!get_data_file_encryption_options(&options)) return false;
-    KeyBuffer de_key, ce_key;
-    if (!generateStorageKey(makeGen(options), &de_key)) return false;
-    if (!generateStorageKey(makeGen(options), &ce_key)) return false;
-    if (create_ephemeral) {
-        // If the key should be created as ephemeral, don't store it.
-        s_ephemeral_users.insert(user_id);
+
+    auto de_key_path = get_de_key_path(user_id);
+    if (create_ephemeral || !android::vold::pathExists(de_key_path)) {
+        KeyBuffer de_key;
+        if (!generateStorageKey(makeGen(options), &de_key)) return false;
+        if (!create_ephemeral && !android::vold::storeKeyAtomically(de_key_path, user_key_temp,
+                                                                    kEmptyAuthentication, de_key))
+            return false;
+        EncryptionPolicy de_policy;
+        if (!install_storage_key(DATA_MNT_POINT, options, de_key, &de_policy)) return false;
+        s_de_policies[user_id] = de_policy;
+        LOG(INFO) << "Created DE key for user " << user_id;
     } else {
-        auto const directory_path = get_ce_key_directory_path(user_id);
-        if (!prepare_dir(directory_path, 0700, AID_ROOT, AID_ROOT)) return false;
-        auto const paths = get_ce_key_paths(directory_path);
-        std::string ce_key_path;
-        if (!get_ce_key_new_path(directory_path, paths, &ce_key_path)) return false;
-        if (!android::vold::storeKeyAtomically(ce_key_path, user_key_temp, kEmptyAuthentication,
-                                               ce_key))
+        if (user_id != 0) {
+            LOG(ERROR) << "DE key already exists on disk";
             return false;
-        fixate_user_ce_key(directory_path, ce_key_path, paths);
-        // Write DE key second; once this is written, all is good.
-        if (!android::vold::storeKeyAtomically(get_de_key_path(user_id), user_key_temp,
-                                               kEmptyAuthentication, de_key))
-            return false;
+        }
     }
-    EncryptionPolicy de_policy;
-    if (!install_storage_key(DATA_MNT_POINT, options, de_key, &de_policy)) return false;
-    s_de_policies[user_id] = de_policy;
-    EncryptionPolicy ce_policy;
-    if (!install_storage_key(DATA_MNT_POINT, options, ce_key, &ce_policy)) return false;
-    s_ce_policies[user_id] = ce_policy;
-    LOG(DEBUG) << "Created keys for user " << user_id;
+
+    auto ce_path = get_ce_key_directory_path(user_id);
+    if (create_ephemeral || !ce_key_exists(ce_path)) {
+        KeyBuffer ce_key;
+        if (!generateStorageKey(makeGen(options), &ce_key)) return false;
+        if (!create_ephemeral) {
+            if (!prepare_dir(ce_path, 0700, AID_ROOT, AID_ROOT)) return false;
+            s_new_ce_keys.insert({user_id, ce_key});
+        }
+        EncryptionPolicy ce_policy;
+        if (!install_storage_key(DATA_MNT_POINT, options, ce_key, &ce_policy)) return false;
+        s_ce_policies[user_id] = ce_policy;
+        LOG(INFO) << "Created CE key for user " << user_id;
+    } else {
+        if (user_id != 0) {
+            LOG(ERROR) << "CE key already exists on disk";
+            return false;
+        }
+    }
+
+    if (create_ephemeral) {
+        s_ephemeral_users.insert(user_id);
+    }
     return true;
 }
 
@@ -509,8 +547,17 @@ static bool prepare_special_dirs() {
     // opportunity to also set the encryption policy of /data/data right away.
     EncryptionPolicy ce_policy;
     if (lookup_policy(s_ce_policies, 0, &ce_policy)) {
-        if (!prepare_dir_with_policy(data_data_dir, 0771, AID_SYSTEM, AID_SYSTEM, ce_policy))
-            return false;
+        if (!prepare_dir_with_policy(data_data_dir, 0771, AID_SYSTEM, AID_SYSTEM, ce_policy)) {
+            // Preparing /data/data failed, yet we had just generated a new CE
+            // key because one wasn't stored.  Before erroring out, try deleting
+            // the directory and retrying, as it's possible that the directory
+            // exists with different CE policy from an interrupted first boot.
+            if (rmdir(data_data_dir.c_str()) != 0) {
+                PLOG(ERROR) << "rmdir " << data_data_dir << " failed";
+            }
+            if (!prepare_dir_with_policy(data_data_dir, 0771, AID_SYSTEM, AID_SYSTEM, ce_policy))
+                return false;
+        }
     } else {
         if (!prepare_dir(data_data_dir, 0771, AID_SYSTEM, AID_SYSTEM)) return false;
         // EnsurePolicy() will have to happen later, in fscrypt_prepare_user_storage().
@@ -546,9 +593,7 @@ bool fscrypt_init_user0() {
         if (!prepare_dir(user_key_dir, 0700, AID_ROOT, AID_ROOT)) return false;
         if (!prepare_dir(user_key_dir + "/ce", 0700, AID_ROOT, AID_ROOT)) return false;
         if (!prepare_dir(user_key_dir + "/de", 0700, AID_ROOT, AID_ROOT)) return false;
-        if (!android::vold::pathExists(get_de_key_path(0))) {
-            if (!create_and_install_user_keys(0, false)) return false;
-        }
+        if (!create_and_install_user_keys(0, false)) return false;
         // TODO: switch to loading only DE_0 here once framework makes
         // explicit calls to install DE keys for secondary users
         if (!load_all_de_keys()) return false;
@@ -625,6 +670,7 @@ static bool evict_ce_key(userid_t user_id) {
         drop_caches_if_needed();
     }
     s_ce_policies.erase(user_id);
+    s_new_ce_keys.erase(user_id);
     return success;
 }
 
@@ -639,13 +685,12 @@ bool fscrypt_destroy_user_key(userid_t user_id) {
     success &= lookup_policy(s_de_policies, user_id, &de_policy) &&
                android::vold::evictKey(DATA_MNT_POINT, de_policy);
     s_de_policies.erase(user_id);
-    auto it = s_ephemeral_users.find(user_id);
-    if (it != s_ephemeral_users.end()) {
-        s_ephemeral_users.erase(it);
-    } else {
+    if (!s_ephemeral_users.erase(user_id)) {
         auto ce_path = get_ce_key_directory_path(user_id);
-        for (auto const path : get_ce_key_paths(ce_path)) {
-            success &= android::vold::destroyKey(path);
+        if (!s_new_ce_keys.erase(user_id)) {
+            for (auto const path : get_ce_key_paths(ce_path)) {
+                success &= android::vold::destroyKey(path);
+            }
         }
         success &= destroy_dir(ce_path);
 
@@ -721,60 +766,60 @@ static bool destroy_volkey(const std::string& misc_path, const std::string& volu
     return android::vold::destroyKey(path);
 }
 
-static bool fscrypt_rewrap_user_key(userid_t user_id, int serial,
-                                    const android::vold::KeyAuthentication& retrieve_auth,
-                                    const android::vold::KeyAuthentication& store_auth) {
-    if (s_ephemeral_users.count(user_id) != 0) return true;
+// (Re-)encrypts the user's CE key with the given secret.  The CE key must
+// either be (a) new (not yet committed), (b) protected by kEmptyAuthentication,
+// or (c) already protected by the given secret.  Cases (b) and (c) are needed
+// to support upgrades from Android versions where CE keys were stored with
+// kEmptyAuthentication when the user didn't have an LSKF.  Case (b) is the
+// normal upgrade case, while case (c) can theoretically happen if an upgrade is
+// requested for a user more than once due to a power-off or other interruption.
+bool fscrypt_set_user_key_protection(userid_t user_id, const std::string& secret_hex) {
+    LOG(DEBUG) << "fscrypt_set_user_key_protection " << user_id;
+    if (!IsFbeEnabled()) return true;
+    auto auth = authentication_from_hex(secret_hex);
+    if (!auth) return false;
+    if (auth->secret.empty()) {
+        LOG(ERROR) << "fscrypt_set_user_key_protection: secret must be nonempty";
+        return false;
+    }
+    if (s_ephemeral_users.count(user_id) != 0) {
+        LOG(DEBUG) << "Not storing key because user is ephemeral";
+        return true;
+    }
     auto const directory_path = get_ce_key_directory_path(user_id);
     KeyBuffer ce_key;
-    std::string ce_key_current_path = get_ce_key_current_path(directory_path);
-    if (retrieveKey(ce_key_current_path, retrieve_auth, &ce_key)) {
-        LOG(DEBUG) << "Successfully retrieved key";
-        // TODO(147732812): Remove this once Locksettingservice is fixed.
-        // Currently it calls fscrypt_clear_user_key_auth with a secret when lockscreen is
-        // changed from swipe to none or vice-versa
-    } else if (retrieveKey(ce_key_current_path, kEmptyAuthentication, &ce_key)) {
-        LOG(DEBUG) << "Successfully retrieved key with empty auth";
+    auto it = s_new_ce_keys.find(user_id);
+    if (it != s_new_ce_keys.end()) {
+        // Committing the key for a new user.  This happens when the user's
+        // synthetic password is created.
+        ce_key = it->second;
     } else {
-        LOG(ERROR) << "Failed to retrieve key for user " << user_id;
-        return false;
+        // Setting the protection on an existing key.  This happens at upgrade
+        // time, when CE keys that were previously protected by
+        // kEmptyAuthentication are encrypted by the user's synthetic password.
+        LOG(DEBUG) << "Key already exists; re-protecting it with the given secret";
+        if (!read_and_fixate_user_ce_key(user_id, kEmptyAuthentication, &ce_key)) {
+            LOG(ERROR) << "Failed to retrieve key for user " << user_id << " using empty auth";
+            // Before failing, also check whether the key is already protected
+            // with the given secret.  This isn't expected, but in theory it
+            // could happen if an upgrade is requested for a user more than once
+            // due to a power-off or other interruption.
+            if (read_and_fixate_user_ce_key(user_id, *auth, &ce_key)) {
+                LOG(WARNING) << "Key is already protected by given secret";
+                return true;
+            }
+            return false;
+        }
     }
     auto const paths = get_ce_key_paths(directory_path);
 
     std::string ce_key_path;
     if (!get_ce_key_new_path(directory_path, paths, &ce_key_path)) return false;
-    if (!android::vold::storeKeyAtomically(ce_key_path, user_key_temp, store_auth, ce_key))
-        return false;
-    return true;
-}
-
-bool fscrypt_add_user_key_auth(userid_t user_id, int serial, const std::string& secret_hex) {
-    LOG(DEBUG) << "fscrypt_add_user_key_auth " << user_id << " serial=" << serial;
-    if (!IsFbeEnabled()) return true;
-    auto auth = authentication_from_hex(secret_hex);
-    if (!auth) return false;
-    return fscrypt_rewrap_user_key(user_id, serial, kEmptyAuthentication, *auth);
-}
-
-bool fscrypt_clear_user_key_auth(userid_t user_id, int serial, const std::string& secret_hex) {
-    LOG(DEBUG) << "fscrypt_clear_user_key_auth " << user_id << " serial=" << serial;
-    if (!IsFbeEnabled()) return true;
-    auto auth = authentication_from_hex(secret_hex);
-    if (!auth) return false;
-    return fscrypt_rewrap_user_key(user_id, serial, *auth, kEmptyAuthentication);
-}
-
-bool fscrypt_fixate_newest_user_key_auth(userid_t user_id) {
-    LOG(DEBUG) << "fscrypt_fixate_newest_user_key_auth " << user_id;
-    if (!IsFbeEnabled()) return true;
-    if (s_ephemeral_users.count(user_id) != 0) return true;
-    auto const directory_path = get_ce_key_directory_path(user_id);
-    auto const paths = get_ce_key_paths(directory_path);
-    if (paths.empty()) {
-        LOG(ERROR) << "No ce keys present, cannot fixate for user " << user_id;
-        return false;
+    if (!android::vold::storeKeyAtomically(ce_key_path, user_key_temp, *auth, ce_key)) return false;
+    if (!fixate_user_ce_key(directory_path, ce_key_path, paths)) return false;
+    if (s_new_ce_keys.erase(user_id)) {
+        LOG(INFO) << "Stored CE key for new user " << user_id;
     }
-    fixate_user_ce_key(directory_path, paths[0], paths);
     return true;
 }
 
