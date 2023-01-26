@@ -16,6 +16,7 @@
 
 #include "FsCrypt.h"
 
+#include "Checkpoint.h"
 #include "Keystore.h"
 #include "KeyStorage.h"
 #include "KeyUtil.h"
@@ -112,6 +113,9 @@ EncryptionPolicy s_device_policy;
 // Map user ids to encryption policies
 std::map<userid_t, EncryptionPolicy> s_de_policies;
 std::map<userid_t, EncryptionPolicy> s_ce_policies;
+
+// CE key fixation operations that have been deferred to checkpoint commit
+std::map<std::string, std::string> s_deferred_fixations;
 
 }  // namespace
 
@@ -215,6 +219,7 @@ static bool read_and_fixate_user_ce_key(userid_t user_id,
         LOG(DEBUG) << "Trying user CE key " << ce_key_path;
         if (retrieveKey(ce_key_path, auth, ce_key)) {
             LOG(DEBUG) << "Successfully retrieved key";
+            s_deferred_fixations.erase(directory_path);
             fixate_user_ce_key(directory_path, ce_key_path, paths);
             return true;
         }
@@ -450,7 +455,11 @@ static bool load_all_de_keys() {
         userid_t user_id = std::stoi(entry->d_name);
         auto key_path = de_dir + "/" + entry->d_name;
         KeyBuffer de_key;
-        if (!retrieveKey(key_path, kEmptyAuthentication, &de_key)) return false;
+        if (!retrieveKey(key_path, kEmptyAuthentication, &de_key)) {
+            // This is probably a partially removed user, so ignore
+            if (user_id != 0) continue;
+            return false;
+        }
         EncryptionPolicy de_policy;
         if (!install_storage_key(DATA_MNT_POINT, s_data_options, de_key, &de_policy)) return false;
         auto ret = s_de_policies.insert({user_id, de_policy});
@@ -685,6 +694,7 @@ bool fscrypt_destroy_user_key(userid_t user_id) {
                 success &= android::vold::destroyKey(path);
             }
         }
+        s_deferred_fixations.erase(ce_path);
         success &= destroy_dir(ce_path);
 
         auto de_key_path = get_de_key_path(user_id);
@@ -825,11 +835,35 @@ bool fscrypt_set_user_key_protection(userid_t user_id, const std::string& secret
     std::string ce_key_path;
     if (!get_ce_key_new_path(directory_path, paths, &ce_key_path)) return false;
     if (!android::vold::storeKeyAtomically(ce_key_path, user_key_temp, *auth, ce_key)) return false;
-    if (!fixate_user_ce_key(directory_path, ce_key_path, paths)) return false;
+
+    // Fixate the key, i.e. delete all other bindings of it.  (In practice this
+    // just means the kEmptyAuthentication binding, if there is one.)  However,
+    // if a userdata filesystem checkpoint is pending, then we need to delay the
+    // fixation until the checkpoint has been committed, since deleting keys
+    // from Keystore cannot be rolled back.
+    if (android::vold::cp_needsCheckpoint()) {
+        LOG(INFO) << "Deferring fixation of " << directory_path << " until checkpoint is committed";
+        s_deferred_fixations[directory_path] = ce_key_path;
+    } else {
+        s_deferred_fixations.erase(directory_path);
+        if (!fixate_user_ce_key(directory_path, ce_key_path, paths)) return false;
+    }
+
     if (s_new_ce_keys.erase(user_id)) {
         LOG(INFO) << "Stored CE key for new user " << user_id;
     }
     return true;
+}
+
+void fscrypt_deferred_fixate_ce_keys() {
+    for (const auto& it : s_deferred_fixations) {
+        const auto& directory_path = it.first;
+        const auto& to_fix = it.second;
+        LOG(INFO) << "Doing deferred fixation of " << directory_path;
+        fixate_user_ce_key(directory_path, to_fix, get_ce_key_paths(directory_path));
+        // Continue on error.
+    }
+    s_deferred_fixations.clear();
 }
 
 std::vector<int> fscrypt_get_unlocked_users() {
