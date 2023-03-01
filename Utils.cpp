@@ -766,7 +766,7 @@ status_t ForkExecvpTimeout(const std::vector<std::string>& args, std::chrono::se
         }
         pid_t timer_pid = fork();
         if (timer_pid == 0) {
-            sleep(timeout.count());
+            std::this_thread::sleep_for(timeout);
             _exit(ETIMEDOUT);
         }
         if (timer_pid == -1) {
@@ -1772,13 +1772,23 @@ std::pair<android::base::unique_fd, std::string> OpenDirInProcfs(std::string_vie
 }
 
 bool IsFuseBpfEnabled() {
-    std::string bpf_override = android::base::GetProperty("persist.sys.fuse.bpf.override", "");
-    if (bpf_override == "true") {
+    // TODO Once kernel supports flag, trigger off kernel flag unless
+    //      ro.fuse.bpf.enabled is explicitly set to false
+    bool enabled;
+    if (base::GetProperty("ro.fuse.bpf.is_running", "") != "")
+        enabled = base::GetBoolProperty("ro.fuse.bpf.is_running", false);
+    else if (base::GetProperty("persist.sys.fuse.bpf.override", "") != "")
+        enabled = base::GetBoolProperty("persist.sys.fuse.bpf.override", false);
+    else
+        enabled = base::GetBoolProperty("ro.fuse.bpf.enabled", false);
+
+    if (enabled) {
+        base::SetProperty("ro.fuse.bpf.is_running", "true");
         return true;
-    } else if (bpf_override == "false") {
+    } else {
+        base::SetProperty("ro.fuse.bpf.is_running", "false");
         return false;
     }
-    return base::GetBoolProperty("ro.fuse.bpf.enabled", false);
 }
 
 }  // namespace vold
