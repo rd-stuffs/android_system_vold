@@ -74,8 +74,7 @@ int main(int argc, char** argv) {
     LOG(DEBUG) << "Detected support for:"
                << (android::vold::IsFilesystemSupported("ext4") ? " ext4" : "")
                << (android::vold::IsFilesystemSupported("f2fs") ? " f2fs" : "")
-               << (android::vold::IsFilesystemSupported("vfat") ? " vfat" : "")
-               << (android::vold::IsFilesystemSupported("ntfs3") ? " ntfs3" : "");
+               << (android::vold::IsFilesystemSupported("vfat") ? " vfat" : "");
 
     VolumeManager* vm;
     NetlinkManager* nm;
@@ -83,9 +82,11 @@ int main(int argc, char** argv) {
     parse_args(argc, argv);
 
     sehandle = selinux_android_file_context_handle();
-    if (sehandle) {
-        selinux_android_set_sehandle(sehandle);
+    if (!sehandle) {
+        LOG(ERROR) << "Failed to get SELinux file contexts handle";
+        exit(1);
     }
+    selinux_android_set_sehandle(sehandle);
 
     mkdir("/dev/block/vold", 0755);
 
